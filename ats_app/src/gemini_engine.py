@@ -6,50 +6,33 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class ATSEngine:
-    def __init__(self, api_key=None):
-        self.api_key = api_key if api_key else os.getenv("GOOGLE_API_KEY")
-        
+    def __init__(self, api_key=None, model_name="models/gemini-1.5-flash"):
+        self.api_key = api_key
         if self.api_key:
             genai.configure(api_key=self.api_key)
-            # Automatically find a working model
-            self.model_name = self._find_best_model()
+            self.model_name = model_name
             self.model = genai.GenerativeModel(self.model_name)
 
-    def _find_best_model(self):
+    @staticmethod
+    def get_available_models(api_key):
+        """Fetches only valid, non-experimental models"""
+        if not api_key: return []
         try:
-            print("🔍 Checking available models for your API Key...")
-            all_models = list(genai.list_models())
+            genai.configure(api_key=api_key)
+            # List all generating models
+            models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
             
-            # Filter models that support generating text
-            supported_models = [m.name for m in all_models if 'generateContent' in m.supported_generation_methods]
-            print(f"✅ Available Models found: {supported_models}")
+            # Smart Filter: Remove 'experimental' models to prevent 429 Errors
+            stable_models = [m for m in models if "exp" not in m]
             
-            # Priority 1: Gemini 1.5 Flash (Best for ATS)
-            for m in supported_models:
-                if 'gemini-1.5-flash' in m and 'latest' not in m: return m
-            
-            # Priority 2: Gemini 1.5 Pro
-            for m in supported_models:
-                if 'gemini-1.5-pro' in m and 'latest' not in m: return m
-            
-            # Priority 3: Gemini Pro (Older but reliable)
-            for m in supported_models:
-                if 'gemini-pro' in m: return m
-
-            # Fallback: Just take the first one available
-            if supported_models:
-                return supported_models[0]
-            
-            # Absolute Fallback (If list fails entirely)
-            return 'models/gemini-1.5-flash'
-            
+            # If filtering removed everything, return original list, else return stable
+            return sorted(stable_models) if stable_models else sorted(models)
         except Exception as e:
-            print(f"⚠️ Error listing models: {e}")
-            return 'models/gemini-1.5-flash'
+            return []
 
     def analyze_resume(self, resume_text, jd_text):
         if not self.api_key:
-            return {"error": "API Key is missing. Check .env file."}
+            return {"error": "API Key is missing."}
             
         prompt = f"""
         Act as an expert ATS (Applicant Tracking System) Scanner.
@@ -78,12 +61,9 @@ class ATSEngine:
             "weaknesses": ["Weakness1"]
         }}
         """
-
         try:
-            # Generate content
             response = self.model.generate_content(prompt)
             clean_text = response.text.replace("```json", "").replace("```", "").strip()
             return json.loads(clean_text)
-                
         except Exception as e:
-            return {"error": f"AI Error using model '{self.model_name}': {str(e)}"}
+            return {"error": f"AI Error ({self.model_name}): {str(e)}"}
